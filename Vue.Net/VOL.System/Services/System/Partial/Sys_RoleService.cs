@@ -1,10 +1,13 @@
-﻿using System;
+﻿using Microsoft.EntityFrameworkCore;
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Threading.Tasks;
 using VOL.Core.Extensions;
 using VOL.Core.ManageUser;
 using VOL.Core.Services;
+using VOL.Core.UserManager;
 using VOL.Core.Utilities;
 using VOL.Entity;
 using VOL.Entity.DomainModels;
@@ -19,7 +22,12 @@ namespace VOL.System.Services
             //角色Id=1默认为超级管理员角色，界面上不显示此角色
             QueryRelativeExpression = (IQueryable<Sys_Role> queryable) =>
             {
-                return queryable.Where(x => x.Role_Id > 1);
+                if (UserContext.Current.IsSuperAdmin)
+                {
+                    return queryable;
+                }
+                List<int> roleIds = GetAllChildrenRoleIdAndSelf();
+                return queryable.Where(x => roleIds.Contains(x.Role_Id));
             };
             return base.GetPageData(pageData);
         }
@@ -38,11 +46,11 @@ namespace VOL.System.Services
         /// <param name="roleId"></param>
         /// <returns></returns>
         public async Task<WebResponseContent> GetUserTreePermission(int roleId)
-        {
+        { 
             WebResponseContent webResponse = new WebResponseContent();
-            if (roleId != 1)
+            if (!UserContext.IsRoleIdSuperAdmin(roleId) && UserContext.Current.RoleId != roleId)
             {
-                if (!(await GetAllChildren(UserContext.Current.RoleId)).Exists(x => x.Id == roleId))
+                if (!(await GetAllChildrenAsync(UserContext.Current.RoleId)).Exists(x => x.Id == roleId))
                 {
                     return webResponse.Error("没有权限获取此角色的权限信息");
                 }
@@ -62,7 +70,7 @@ namespace VOL.System.Services
             return webResponse.OK(null, data);
         }
 
-        private List<Sys_Actions> GetActions(int menuId,List<Sys_Actions> menuActions, List<Permissions> permissions, int roleId)
+        private List<Sys_Actions> GetActions(int menuId, List<Sys_Actions> menuActions, List<Permissions> permissions, int roleId)
         {
             if (UserContext.IsRoleIdSuperAdmin(roleId))
             {
@@ -88,31 +96,72 @@ namespace VOL.System.Services
             return new WebResponseContent().OK(null, new
             {
                 tree = webResponse.Data,
-                roles = await GetAllChildren(roleId)
+                roles = await GetAllChildrenAsync(roleId)
             });
         }
 
         private List<RoleNodes> roles = null;
-        public async Task<List<RoleNodes>> GetAllChildren(int roleId)
+
+        /// <summary>
+        /// 获取当前角色下的所有角色包括自己的角色Id
+        /// </summary>
+        /// <returns></returns>
+        public List<int> GetAllChildrenRoleIdAndSelf()
         {
-            roles = await repository
-              .FindAsync(
-              x => x.Enable == 1 && x.Role_Id > 1,
-              s => new RoleNodes() { Id = s.Role_Id, ParentId = s.ParentId, RoleName = s.RoleName });
-            if (roleId == 1)
-            {
-                return roles;
-            }
+            int roleId = UserContext.Current.RoleId;
+            List<int> roleIds = GetAllChildren(roleId).Select(x => x.Id).ToList();
+            roleIds.Add(roleId);
+            return roleIds;
+        }
+
+
+        /// <summary>
+        /// 获取当前角色下的所有角色
+        /// </summary>
+        /// <param name="roleId"></param>
+        /// <returns></returns>
+        public List<RoleNodes> GetAllChildren(int roleId)
+        {
+            roles = GetAllRoleQueryable(roleId).ToList();
+            return GetAllChildrenNodes(roleId);
+        }
+
+        public async Task<List<RoleNodes>> GetAllChildrenAsync(int roleId)
+        {
+            roles = await GetAllRoleQueryable(roleId).ToListAsync();
+            return GetAllChildrenNodes(roleId);
+        }
+        private IQueryable<RoleNodes> GetAllRoleQueryable(int roleId)
+        {
+            return repository
+                   .FindAsIQueryable(
+                   x => x.Enable == 1 && x.Role_Id > 1)
+                   .Select(
+                   s => new RoleNodes()
+                   {
+                       Id = s.Role_Id,
+                       ParentId = s.ParentId,
+                       RoleName = s.RoleName
+                   });
+        }
+
+        public async Task<List<int>> GetAllChildrenRoleIdAsync(int roleId)
+        {
+            return (await GetAllChildrenAsync(roleId)).Select(x => x.Id).ToList();
+        }
+
+
+        public List<int> GetAllChildrenRoleId(int roleId)
+        {
+            return GetAllChildren(roleId).Select(x => x.Id).ToList();
+        }
+
+        private List<RoleNodes> GetAllChildrenNodes(int roleId)
+        {
+            if (UserContext.IsRoleIdSuperAdmin(roleId)) return roles;
             rolesChildren = GetChildren(roleId);
-            return roles;
+            return rolesChildren;
         }
-
-
-        public async Task<List<int>> GetAllChildrenRoleId(int roleId)
-        {
-            return (await GetAllChildren(roleId)).Select(x=>x.Id).ToList();
-        }
-
         /// <summary>
         /// 递归获取所有子节点权限
         /// </summary>
@@ -143,7 +192,7 @@ namespace VOL.System.Services
             try
             {
                 UserInfo user = UserContext.Current.UserInfo;
-                if (!(await GetAllChildren(user.Role_Id)).Exists(x => x.Id == roleId))
+                if (!(await GetAllChildrenAsync(user.Role_Id)).Exists(x => x.Id == roleId))
                     return webResponse.Error("没有权限修改此角色的权限信息");
                 //当前用户的权限
                 List<Permissions> permissions = UserContext.Current.Permissions;
@@ -164,10 +213,10 @@ namespace VOL.System.Services
                       .Select(s => s.Value).ToArray();
 
                     //如果当前权限没有分配过，设置Auth_Id默认为0，表示新增的权限
-                    var auth = roleAuths.Where(r => r.Menu_Id == x.Id).Select(s =>new { s.Auth_Id,s.AuthValue,s.Menu_Id}).FirstOrDefault();
-                    string newAuthValue= string.Join(",", arr);
+                    var auth = roleAuths.Where(r => r.Menu_Id == x.Id).Select(s => new { s.Auth_Id, s.AuthValue, s.Menu_Id }).FirstOrDefault();
+                    string newAuthValue = string.Join(",", arr);
                     //权限没有发生变化则不处理
-                    if (auth==null||auth.AuthValue != newAuthValue)
+                    if (auth == null || auth.AuthValue != newAuthValue)
                     {
                         updateAuths.Add(new Sys_RoleAuth()
                         {
@@ -181,10 +230,11 @@ namespace VOL.System.Services
                             Creator = user.UserTrueName
                         });
                     }
-                    else {
+                    else
+                    {
                         originalMeunIds.Add(auth.Menu_Id);
                     }
-              
+
                 }
                 //更新权限
                 repository.UpdateRange(updateAuths.Where(x => x.Auth_Id > 0), x => new
@@ -198,7 +248,7 @@ namespace VOL.System.Services
                 repository.AddRange(updateAuths.Where(x => x.Auth_Id <= 0));
 
                 //获取权限取消的权限
-                int[] authIds = roleAuths.Where(x =>userPermissions.Select(u => u.Id)
+                int[] authIds = roleAuths.Where(x => userPermissions.Select(u => u.Id)
                  .ToList().Contains(x.Menu_Id) || originalMeunIds.Contains(x.Menu_Id))
                 .Select(s => s.Auth_Id)
                 .ToArray();
@@ -216,9 +266,9 @@ namespace VOL.System.Services
                     x.ModifyDate
                 });
 
-                int addCount=  updateAuths.Where(x => x.Auth_Id <= 0).Count();
+                int addCount = updateAuths.Where(x => x.Auth_Id <= 0).Count();
                 int updateCount = updateAuths.Where(x => x.Auth_Id > 0).Count();
-                await repository.SaverChangesAsync();
+                await repository.SaveChangesAsync();
 
                 string _version = DateTime.Now.ToString("yyyyMMddHHMMssfff");
                 //标识缓存已更新
@@ -235,6 +285,63 @@ namespace VOL.System.Services
                 Logger.Info($"权限分配置:{message}{webResponse.Message}");
             }
 
+            return webResponse;
+        }
+
+
+        public override WebResponseContent Add(SaveModel saveDataModel)
+        {
+            AddOnExecuting = (Sys_Role role, object obj) =>
+            {
+                return ValidateRoleName(role, x => x.RoleName == role.RoleName);
+            };
+            return RemoveCache(base.Add(saveDataModel));
+        }
+
+        public override WebResponseContent Del(object[] keys, bool delList = true)
+        {
+            return RemoveCache(base.Del(keys, delList));
+        }
+
+        private WebResponseContent ValidateRoleName(Sys_Role role, Expression<Func<Sys_Role, bool>> predicate)
+        {
+            WebResponseContent responseContent = new WebResponseContent(true);
+            if (repository.Exists(predicate))
+            {
+                return responseContent.Error($"角色名【{role.RoleName}】已存在,请设置其他角色名");
+            }
+            return responseContent;
+        }
+
+        public override WebResponseContent Update(SaveModel saveModel)
+        {
+            UpdateOnExecuting = (Sys_Role role, object obj1, object obj2, List<object> obj3) =>
+            {
+                //2020.05.07新增禁止选择上级角色为自己
+                if (role.Role_Id == role.ParentId)
+                {
+                    return WebResponseContent.Instance.Error($"上级角色不能选择自己");
+                }
+                if (role.Role_Id==UserContext.Current.RoleId)
+                {
+                    return WebResponseContent.Instance.Error($"不能修改自己的角色");
+                }
+
+                if (GetAllChildren(role.ParentId).Any(x => x.ParentId == role.Role_Id)
+                ||repository.Exists(x=>x.ParentId== role.Role_Id))
+                {
+                    return WebResponseContent.Instance.Error($"不能选择此上级角色，选择的上级角色与当前角色形成依赖关系");
+                }
+                return ValidateRoleName(role, x => x.RoleName == role.RoleName && x.Role_Id != role.Role_Id);
+            };
+            return RemoveCache(base.Update(saveModel));
+        }
+        private WebResponseContent RemoveCache(WebResponseContent webResponse)
+        {
+            if (webResponse.Status)
+            {
+                RoleContext.Refresh();
+            }
             return webResponse;
         }
     }

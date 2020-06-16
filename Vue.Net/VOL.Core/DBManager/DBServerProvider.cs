@@ -1,4 +1,5 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using System;
 using System.Collections.Generic;
 using System.Data;
@@ -57,23 +58,23 @@ namespace VOL.Core.DBManager
         {
             return GetConnectionString(DefaultConnName);
         }
-        private static bool _isMysql= DBType.Name == DbCurrentType.MySql.ToString();
         public static IDbConnection GetDbConnection(string connString = null)
         {
-            if (_isMysql)
+            if (connString==null)
             {
-                return new MySql.Data.MySqlClient.MySqlConnection(connString ?? ConnectionPool[DefaultConnName]);
+                connString = ConnectionPool[DefaultConnName];
+            }  
+            if (DBType.Name == DbCurrentType.MySql.ToString())
+            {
+                return new MySql.Data.MySqlClient.MySqlConnection(connString);
             }
-            return new SqlConnection(connString ?? ConnectionPool[DefaultConnName]); 
+            if (DBType.Name == DbCurrentType.PgSql.ToString())
+            {
+                return new NpgsqlConnection(connString);
+            }
+            return new SqlConnection(connString); 
         }
-        public static IDbConnection GetMyDbConnection(string connString = null)
-        {
-            //new MySql.Data.MySqlClient.MySqlConnection(connString);
-            string mySql = "Data Source=132.232.2.109;Database=mysql;User ID=xx;Password=xxx;pooling=true;CharSet=utf8;port=3306;sslmode=none";
-            // MySqlConnector
-            return new MySql.Data.MySqlClient.MySqlConnection(mySql);
 
-        }
         public static VOLContext DbContext
         {
             get { return GetEFDbContext(); }

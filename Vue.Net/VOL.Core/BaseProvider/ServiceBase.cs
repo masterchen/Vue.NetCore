@@ -81,22 +81,23 @@ namespace VOL.Core.BaseProvider
         /// </summary>
         /// <param name="pageData"></param>
         /// <param name="propertyInfo"></param>
-        private void GetPageDataSort(PageDataOptions pageData, PropertyInfo[] propertyInfo)
+        private Dictionary<string, QueryOrderBy> GetPageDataSort(PageDataOptions pageData, PropertyInfo[] propertyInfo)
         {
-
             if (base.OrderByExpression != null)
             {
-                pageData.Sort = string.Join(" ,", base.OrderByExpression.GetExpressionToDic().Select(x => x.Key + "  " + x.Value.ToString()).ToList());
-                return;
+                return base.OrderByExpression.GetExpressionToDic();
             }
-            pageData.Sort = (pageData.Sort ?? "").Trim().ToLower();
-
+            //排序字段不存在直接移除
+            if (!string.IsNullOrEmpty(pageData.Sort) && !propertyInfo.Any(x => x.Name.ToLower() == pageData.Sort.ToLower()))
+            {
+                pageData.Sort = null;
+            }
             //如果没有排序字段，则使用主键作为排序字段
-            //如果主键不是自增Int类型则使用appsettings.json中CreateMember->DateField配置的创建时间作为排序
-            if (!string.IsNullOrEmpty(pageData.Sort))
+            if (string.IsNullOrEmpty(pageData.Sort))
             {
                 PropertyInfo property = propertyInfo.GetKeyProperty();
-                if (property.PropertyType == typeof(int) || property.PropertyType == typeof(Int64))
+                //如果主键不是自增类型则使用appsettings.json中CreateMember->DateField配置的创建时间作为排序
+                if (property.PropertyType == typeof(int) || property.PropertyType == typeof(long))
                 {
                     if (!propertyInfo.Any(x => x.Name.ToLower() == pageData.Sort))
                     {
@@ -105,19 +106,20 @@ namespace VOL.Core.BaseProvider
                 }
                 else
                 {
-                    if (string.IsNullOrEmpty(AppSetting.CreateMember.DateField))
-                        throw new Exception("未配置好查询的排序默认排序字段");
-                    pageData.Sort = AppSetting.CreateMember.DateField;
+                    if (!string.IsNullOrEmpty(AppSetting.CreateMember.DateField)
+                        && propertyInfo.Any(x => x.Name == AppSetting.CreateMember.DateField))
+                    {
+                        pageData.Sort = AppSetting.CreateMember.DateField;
+                    }
+                    else
+                    {
+                        pageData.Sort = propertyInfo.GetKeyName();
+                    }
                 }
-
             }
-            pageData.Order = (pageData.Order ?? _desc).Trim().ToLower();
-            if (pageData.Order != _desc && pageData.Order != _asc)
-            {
-                pageData.Order = _desc;
-            }
-            pageData.Sort = pageData.Sort + "  " + pageData.Order;
-
+            return new Dictionary<string, QueryOrderBy>() { {
+                    pageData.Sort, pageData.Order?.ToLower() == _asc? QueryOrderBy.Asc: QueryOrderBy.Desc
+                } };
         }
 
         /// <summary>
@@ -129,7 +131,7 @@ namespace VOL.Core.BaseProvider
         private PageDataOptions ValidatePageOptions(PageDataOptions options, out IQueryable<T> queryable)
         {
             options = options ?? new PageDataOptions();
-            GetPageDataSort(options, TProperties);
+
             List<SearchParameters> searchParametersList = new List<SearchParameters>();
             if (!string.IsNullOrEmpty(options.Wheres))
             {
@@ -149,7 +151,7 @@ namespace VOL.Core.BaseProvider
                 x.DisplayType = x.DisplayType.GetDBCondition();
                 if (string.IsNullOrEmpty(x.Value))
                 {
-                    searchParametersList.Remove(x);
+                    //  searchParametersList.Remove(x);
                     continue;
                 }
 
@@ -161,7 +163,7 @@ namespace VOL.Core.BaseProvider
                 // if (string.IsNullOrEmpty(x.Value))
                 if (values == null || values.Length == 0)
                 {
-                    searchParametersList.Remove(x);
+                    //   searchParametersList.Remove(x);
                     continue;
                 }
                 if (x.DisplayType == HtmlElementType.Contains)
@@ -171,7 +173,7 @@ namespace VOL.Core.BaseProvider
                               ? queryable.Where(x.Name.CreateExpression<T>(values, expressionType))
                               : queryable.Where(x.Name.CreateExpression<T>(x.Value, expressionType));
             }
-            options.Wheres = searchParametersList.GetEntitySql();
+            //   options.Wheres = searchParametersList.GetEntitySql();
             options.TableName = base.TableName ?? typeof(T).Name;
             return options;
         }
@@ -184,24 +186,14 @@ namespace VOL.Core.BaseProvider
         public virtual PageGridData<T> GetPageData(PageDataOptions options)
         {
             options = ValidatePageOptions(options, out IQueryable<T> queryable);
-            Dictionary<string, QueryOrderBy> orderbyDic = new Dictionary<string, QueryOrderBy>();
-            options.Sort.Split(',').Select(x => x.Trim()).Where(c => c.Length > 0).ToList().ForEach(s =>
-            {
-                string[] sortArr = s.Split(' ').Select(x => x.Trim()).Where(c => c.Length > 0).ToArray();
-                if (sortArr.Length == 2)
-                {
-                    orderbyDic.Add(sortArr[0], sortArr[1].ToLower() == "desc"
-                        ? QueryOrderBy.Desc
-                        : QueryOrderBy.Asc);
-                }
-            });
-            PageGridData<T> pageGridData = new PageGridData<T>();
+            //获取排序字段
+            Dictionary<string, QueryOrderBy> orderbyDic = GetPageDataSort(options, TProperties);
 
+            PageGridData<T> pageGridData = new PageGridData<T>();
             if (QueryRelativeExpression != null)
             {
                 queryable = QueryRelativeExpression.Invoke(queryable);
             }
-
             if (options.Export)
             {
                 pageGridData.rows = queryable.GetIQueryableOrderBy(orderbyDic).Take(Limit).ToList();
@@ -214,6 +206,13 @@ namespace VOL.Core.BaseProvider
                                     out int rowCount,
                                     orderbyDic).ToList();
                 pageGridData.total = rowCount;
+                //查询界面统计求等字段
+                if (SummaryExpress != null)
+                {
+                    pageGridData.summary = SummaryExpress.Invoke(queryable);
+                    //Func<T, T> groupExpress = x =>x;
+                    //pageGridData.summary = queryable.GroupBy(groupExpress).Select(SummaryExpress).FirstOrDefault();
+                }
             }
             GetPageDataOnExecuted?.Invoke(pageGridData);
             return pageGridData;
@@ -222,11 +221,19 @@ namespace VOL.Core.BaseProvider
 
         public virtual object GetDetailPage(PageDataOptions pageData)
         {
-            Type detailType = typeof(T).GetCustomAttribute<EntityAttribute>().DetailTable[0];
+            Type detailType = typeof(T).GetCustomAttribute<EntityAttribute>()?.DetailTable?[0];
+            if (detailType == null)
+            {
+                return null;
+            }
             object obj = typeof(ServiceBase<T, TRepository>)
                  .GetMethod("GetDetailPage", BindingFlags.Instance | BindingFlags.NonPublic)
                  .MakeGenericMethod(new Type[] { detailType }).Invoke(this, new object[] { pageData });
             return obj;
+        }
+        protected override object GetDetailSummary<Detail>(IQueryable<Detail> queryeable)
+        {
+            return null;
         }
 
         private PageGridData<Detail> GetDetailPage<Detail>(PageDataOptions options) where Detail : class
@@ -243,13 +250,19 @@ namespace VOL.Core.BaseProvider
             var queryeable = repository.DbContext.Set<Detail>().Where(whereExpression);
 
             gridData.total = queryeable.Count();
-            //生成排序字段
-            var sort = (options.Sort ?? typeof(Detail).GetKeyName()).GetExpression<Detail>();
+
+            string sortName = options.Sort ?? typeof(Detail).GetKeyName();
+            Dictionary<string, QueryOrderBy> orderBy = new Dictionary<string, QueryOrderBy>() { {
+                     sortName,
+                     options.Order == "asc" ?
+                     QueryOrderBy.Asc :
+                     QueryOrderBy.Desc } };
             gridData.rows = queryeable
-                .OrderByDescending(sort)
+                 .GetIQueryableOrderBy(orderBy)
                 .Skip((options.Page - 1) * options.Rows)
                 .Take(options.Rows)
                 .ToList();
+            gridData.summary = GetDetailSummary<Detail>(queryeable);
             return gridData;
         }
 
@@ -262,7 +275,40 @@ namespace VOL.Core.BaseProvider
         /// <returns></returns>
         public virtual WebResponseContent Upload(List<Microsoft.AspNetCore.Http.IFormFile> files)
         {
-            return new WebResponseContent { Status = true, Message = "文件上传功能开发中...." };
+            if (files == null || files.Count == 0) return Response.Error("请上传文件");
+
+            var limitFiles = files.Where(x => x.Length > LimitUpFileSizee * 1024 * 1024).Select(s => s.FileName);
+            if (limitFiles.Count() > 0)
+            {
+                return Response.Error($"文件大小不能超过：{ LimitUpFileSizee}M,{string.Join(",", limitFiles)}");
+            }
+            string filePath = $"Upload/Tables/{typeof(T).GetEntityTableName()}/{DateTime.Now.ToString("yyyMMddHHmmsss") + new Random().Next(1000, 9999)}/";
+            string fullPath = filePath.MapPath(true);
+            int i = 0;
+            //   List<string> fileNames = new List<string>();
+            try
+            {
+                if (!Directory.Exists(fullPath)) Directory.CreateDirectory(fullPath);
+                for (i = 0; i < files.Count; i++)
+                {
+                    string fileName = files[i].FileName;
+                    //if (fileNames.Contains(fileName))
+                    //{
+                    //    fileName += $"({i}){fileName}";
+                    //}
+                    //fileNames.Add(fileName);
+                    using (var stream = new FileStream(fullPath + fileName, FileMode.Create))
+                    {
+                        files[i].CopyTo(stream);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"上传文件失败：{typeof(T).GetEntityTableCnName()},路径：{filePath},失败文件:{files[i]},{ex.Message + ex.StackTrace}");
+                return Response.Error("文件上传失败");
+            }
+            return Response.OK("文件上传成功", filePath);
         }
 
         private List<string> GetIgnoreTemplate()
@@ -280,8 +326,8 @@ namespace VOL.Core.BaseProvider
             string dicPath = $"Download/{DateTime.Now.ToString("yyyMMdd")}/Template/".MapPath();
             if (!Directory.Exists(dicPath)) Directory.CreateDirectory(dicPath);
             string fileName = tableName + DateTime.Now.ToString("yyyyMMddHHssmm") + ".xlsx";
-
-            EPPlusHelper.ExportTemplate<T>(GetIgnoreTemplate(), dicPath, fileName);
+            //DownLoadTemplateColumns 2020.05.07增加扩展指定导出模板的列
+            EPPlusHelper.ExportTemplate<T>(DownLoadTemplateColumns,GetIgnoreTemplate(), dicPath, fileName);
             return Response.OK(null, dicPath + fileName);
         }
 
@@ -305,7 +351,7 @@ namespace VOL.Core.BaseProvider
             }
             try
             {
-                Response = EPPlusHelper.ReadToDataTable<T>(dicPath, GetIgnoreTemplate());
+                Response = EPPlusHelper.ReadToDataTable<T>(dicPath, DownLoadTemplateColumns, GetIgnoreTemplate());
             }
             catch (Exception ex)
             {
@@ -313,7 +359,18 @@ namespace VOL.Core.BaseProvider
                 Logger.Error($"表{typeof(T).GetEntityTableCnName()}导入失败{ex.Message + ex.InnerException?.Message}");
             }
             if (!Response.Status) return Response;
-            repository.AddRange(Response.Data as List<T>, true);
+            List<T> list = Response.Data as List<T>;
+            if (ImportOnExecuting != null)
+            {
+                Response = ImportOnExecuting.Invoke(list);
+                if (!Response.Status) return Response;
+            }
+            repository.AddRange(list, true);
+            if (ImportOnExecuted != null)
+            {
+                Response = ImportOnExecuted.Invoke(list);
+                if (!Response.Status) return Response;
+            }
             return new WebResponseContent { Status = true, Message = "文件上传成功" };
         }
 
@@ -336,7 +393,8 @@ namespace VOL.Core.BaseProvider
                 Response = ExportOnExecuting(list, ignoreColumn);
                 if (!Response.Status) return Response;
             }
-            EPPlusHelper.Export(list, ignoreColumn, savePath, fileName);
+            //ExportColumns 2020.05.07增加扩展指定导出模板的列
+            EPPlusHelper.Export(list, ExportColumns?.GetExpressionToArray(), ignoreColumn, savePath, fileName);
             return Response.OK(null, (savePath + "/" + fileName).EncryptDES(AppSetting.Secret.ExportFile));
         }
 
@@ -609,12 +667,12 @@ namespace VOL.Core.BaseProvider
                 {
                     //获取编辑的字段
                     string[] updateField = saveModel.DetailData
-                            .Where(c => c[detailKeyInfo.Name].ChangeType(detailKeyInfo.PropertyType)
-                            .Equal(detailKeyInfo.GetValue(x)))
-                            .FirstOrDefault()
-                            .Keys.Where(k => k != detailKeyInfo.Name)
-                            .Where(r => !CreateFields.Contains(r))
-                            .ToArray();
+                        .Where(c => c[detailKeyInfo.Name].ChangeType(detailKeyInfo.PropertyType)
+                        .Equal(detailKeyInfo.GetValue(x)))
+                        .FirstOrDefault()
+                        .Keys.Where(k => k != detailKeyInfo.Name)
+                        .Where(r => !CreateFields.Contains(r))
+                        .ToArray();
                     //設置默認值
                     x.SetModifyDefaultVal();
                     //添加修改字段
@@ -744,11 +802,22 @@ namespace VOL.Core.BaseProvider
 
                 result = detailType.ValidateDicInEntity(saveModel.DetailData, true, false, new string[] { mainKeyProperty.Name });
                 if (result != string.Empty) return Response.Error(result);
+
+                //主从关系指定外键,即从表的外键可以不是主键的主表,还需要改下代码生成器设置属性外键,功能预留后面再开发(2020.04.25)
+                //string foreignKey = type.GetTypeCustomValue<System.ComponentModel.DataAnnotations.Schema.ForeignKeyAttribute>(x => new { x.Name });
+                //if (!string.IsNullOrEmpty(foreignKey))
+                //{
+                //    var _mainKeyProperty = detailType.GetProperties().Where(x => x.Name.ToLower() == foreignKey.ToLower()).FirstOrDefault();
+                //    if (_mainKeyProperty != null)
+                //    {
+                //        mainKeyProperty = _mainKeyProperty;
+                //    }
+                //}
             }
 
             //获取主建类型的默认值用于判断后面数据是否正确,int long默认值为0,guid :0000-000....
             object keyDefaultVal = mainKeyProperty.PropertyType.Assembly.CreateInstance(mainKeyProperty.PropertyType.FullName);//.ToString();
-            //判断是否包含主键
+                                                                                                                               //判断是否包含主键
             if (mainKeyProperty == null
                 || !saveModel.MainData.ContainsKey(mainKeyProperty.Name)
                 || saveModel.MainData[mainKeyProperty.Name] == null
@@ -789,14 +858,14 @@ namespace VOL.Core.BaseProvider
                 repository.Update(mainEntity, type.GetEditField().Where(c => saveModel.MainData.Keys.Contains(c) && !CreateFields.Contains(c)).ToArray());
                 if (base.UpdateOnExecuted == null)
                 {
-                    repository.SaverChanges();
+                    repository.SaveChanges();
                     Response.OK(ResponseType.SaveSuccess);
                 }
                 else
                 {
                     Response = repository.DbContextBeginTransaction(() =>
                     {
-                        repository.SaverChanges();
+                        repository.SaveChanges();
                         Response = UpdateOnExecuted(mainEntity, null, null, null);
                         return Response;
                     });
@@ -868,7 +937,7 @@ namespace VOL.Core.BaseProvider
         {
             Type entityType = typeof(T);
             var keyProperty = entityType.GetKeyProperty();
-            if (keyProperty == null || keys.Length == 0) return Response.Error(ResponseType.NoKeyDel);
+            if (keyProperty == null || keys == null || keys.Length == 0) return Response.Error(ResponseType.NoKeyDel);
 
             IEnumerable<(bool, string, object)> validation = keyProperty.ValidationValueForDbType(keys);
             if (validation.Any(x => !x.Item1))
@@ -889,28 +958,27 @@ namespace VOL.Core.BaseProvider
             string joinKeys = (fieldType == FieldType.Int || fieldType == FieldType.BigInt)
                  ? string.Join(",", keys)
                  : $"'{string.Join("','", keys)}'";
-
-            string sql = $"DELETE FROM {entityType.Name } where {tKey} in ({joinKeys});";
+            string sql = $"DELETE FROM {entityType.GetEntityTableName() } where {tKey} in ({joinKeys});";
             if (delList)
             {
-                Type detailType = entityType.GetCustomAttribute<EntityAttribute>().DetailTable?[0];
+                Type detailType = entityType.GetCustomAttribute<EntityAttribute>()?.DetailTable?[0];
                 if (detailType != null)
-                    sql = sql + $"DELETE FROM {detailType.Name} where {tKey} in ({joinKeys});";
+                    sql = sql + $"DELETE FROM {detailType.GetEntityTableName()} where {tKey} in ({joinKeys});";
             }
             //repository.DapperContext.ExcuteNonQuery(sql, CommandType.Text, null, true);
 
             //可能在删除后还要做一些其它数据库新增或删除操作，这样就可能需要与删除保持在同一个事务中处理
             //采用此方法 repository.DbContextBeginTransaction(()=>{//do delete......and other});
             //做的其他操作，在DelOnExecuted中加入委托实现
-            repository.DbContextBeginTransaction(() =>
-            {
-                repository.ExecuteSqlCommand(sql);
-                if (DelOnExecuted != null)
-                {
-                    Response = DelOnExecuted(keys);
-                }
-                return Response;
-            });
+            Response = repository.DbContextBeginTransaction(() =>
+             {
+                 repository.ExecuteSqlCommand(sql);
+                 if (DelOnExecuted != null)
+                 {
+                     Response = DelOnExecuted(keys);
+                 }
+                 return Response;
+             });
             if (Response.Status && string.IsNullOrEmpty(Response.Message)) Response.OK(ResponseType.DelSuccess);
             return Response;
         }
@@ -1077,5 +1145,35 @@ namespace VOL.Core.BaseProvider
         {
             source.MapValueToEntity<TSource, TResult>(result, expression);
         }
+
+
+        ////当前用户只能操作自己(与下级角色)创建的数据,如:查询、删除、修改等操作(待完)
+        //private Expression<Func<T, bool>> GetCurrentUserCondition(Type type)
+        //{
+        //    var userContext = UserContext.Current;
+        //    if (userContext.IsSuperAdmin)
+        //    {
+        //        return null;
+        //    }
+        //    //LimitCurrentUserPermission开启用户权限与代码生成器同时开起了用户权限才会生效
+        //    if (!LimitCurrentUserPermission || !type.GetCustomAttribute<EntityAttribute>().CurrentUserPermission) { return null; }
+
+        //    //表的创建人字段必须与配置文件appsettings.json中的创建人字段相同(大小写也必须相同)
+        //    string createId = AppSetting.CreateMember.UserIdField;
+        //    if (type.GetProperty(createId) == null)
+        //    {
+        //        return null;
+        //    }
+
+        //    Expression<Func<T, bool>> whereExpression = createId.CreateExpression<T>(userContext.UserId, LinqExpressionType.Equal);
+        //    List<int> roles = RoleContext.GetAllChildrenIds(userContext.RoleId);
+        //    //没有下级角色的直看当前用户的数据
+        //    if (roles == null || roles.Count == 0)
+        //    {
+        //        return whereExpression;
+        //    }
+        //    //   type.GetProperty();
+        //    return null;
+        //}
     }
 }

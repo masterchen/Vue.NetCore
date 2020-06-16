@@ -16,17 +16,21 @@ let viewgird = [
         path: '/Sys_Role',
         name: 'Sys_Role',
         component: () => import('@/views/system/Sys_Role.vue')
-    } 
+    }
     ,{
         path: '/Sys_DictionaryList',
         name: 'Sys_DictionaryList',
         component: () => import('@/views/system/Sys_DictionaryList.vue')
-    } 
+    }
     ,{
         path: '/SellOrder',
         name: 'SellOrder',
         component: () => import('@/views/order/SellOrder.vue')
     }    ,{
+      path: '/vSellOrderImg',
+      name: 'vSellOrderImg',
+      component: () => import('@/views/order/vSellOrderImg.vue')
+      }     ,{
         path: '/App_Appointment',
         name: 'App_Appointment',
         component: () => import('@/views/order/App_Appointment.vue')
@@ -46,5 +50,9 @@ let viewgird = [
         path: '/App_ReportPrice',
         name: 'App_ReportPrice',
         component: () => import('@/views/appmanager/App_ReportPrice.vue')
+    }    ,{
+        path: '/App_News',
+        name: 'App_News',
+        component: () => import('@/views/appmanager/App_News.vue')
     }]
 export default viewgird

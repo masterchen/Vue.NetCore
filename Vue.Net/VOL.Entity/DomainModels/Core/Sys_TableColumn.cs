@@ -2,10 +2,11 @@
 using System;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
-using Microsoft.AspNetCore.Mvc;
+
 
 namespace VOL.Entity.DomainModels
 {
+    [Table("Sys_TableColumn")]
     public class Sys_TableColumn : BaseEntity
     {
         /// <summary>

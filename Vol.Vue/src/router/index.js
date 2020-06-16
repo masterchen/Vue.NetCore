@@ -9,24 +9,34 @@ import redirect from './redirect'
 import viewgird from './viewGird'
 import h5 from './h5'
 import form from './form'
+import formsMulti from './formsMulti'
+import charts from './charts'
+import tables from './tables'
+import documents from './documents'
 Vue.use(Router)
 
 const router = new Router({
   mode: 'history',
   routes: [
+    ...exampleRouter,
+    ...h5,
+    ...documents,
     {
       path: '*',
       component: () => import('@/views/redirect/404.vue')
     },
-    ...exampleRouter,
-    ...h5,
     {
       path: '/',
       name: 'Index',
       component: () => import('@/views/Index'),
       redirect: '/home',
       children: [
-        ...form,
+        ...viewgird,//代码生成的后配置菜单的路由
+        ...redirect,//401,404,500等路由
+        ...form,//Demo表单路由
+        ...formsMulti,//Demo一对多表单路由
+        ...charts,//Demo图表单路由
+        ...tables,
         {
           path: '/home',
           name: 'home',
@@ -49,20 +59,7 @@ const router = new Router({
           name: 'permission',
           component: () => import('@/views/system/Permission.vue')
         }
-        ,
-        ...viewgird,
-        ...redirect
       ]
-    }, {
-      path: '/edit',
-      name: 'edit',
-      component: () => import('@/views/example/editTable.vue')
-    },
-
-    {
-      path: '/HelloWorld',
-      name: 'HelloWorld',
-      component: () => import('@/components/HelloWorld')
     },
     {
       path: '/login',
@@ -71,46 +68,8 @@ const router = new Router({
       meta: {
         anonymous: true
       }
-    },
-    {
-      path: '/document',
-      name: 'document',
-      component: () => import('@/views/document/document.vue'),
-      redirect: '/document/guide',
-      meta: {
-        anonymous: true
-      }
-      ,
-      children: [{
-        path: '/document/guide',
-        name: '/document/guide',
-        component: () => import('@/views/document/guide.vue'),
-        meta: {
-          anonymous: true
-        }
-      },{
-        path: '/document/coder',
-        name: '/document/coder',
-        component: () => import('@/views/document/coder.vue'),
-        meta: {
-          anonymous: true
-        }
-      },{
-        path: '/document/vueDev',
-        name: '/document/vueDev',
-        component: () => import('@/views/document/vueDev.vue'),
-        meta: {
-          anonymous: true
-        }
-      },{
-        path: '/document/netCoreDev',
-        name: '/document/netCoreDev',
-        component: () => import('@/views/document/netCoreDev.vue'),
-        meta: {
-          anonymous: true
-        }
-      }]
     }
+
   ]
 })
 
@@ -118,7 +77,8 @@ const router = new Router({
 router.beforeEach((to, from, next) => {
   store.getters.getUserInfo()
   if (to.matched.length == 0) return next({ path: '/404' });
-
+  //2020.06.03增加路由切换时加载提示
+  store.dispatch("onLoading", true);
   if ((to.hasOwnProperty('meta') && to.meta.anonymous) || store.getters.isLogin()) {
     return next();
   }
@@ -126,6 +86,10 @@ router.beforeEach((to, from, next) => {
   next({ path: '/login', query: { redirect: Math.random() } });
 })
 
+//2020.06.03增加路由切换时加载提示
+router.afterEach((to, from) => {
+  store.dispatch("onLoading", false);
+})
 router.onError((error) => {
   const pattern = /Loading chunk (\d)+ failed/g;
   const isChunkLoadFailed = error.message.match(pattern);
@@ -133,7 +97,8 @@ router.onError((error) => {
   console.log(error.message);
   console.log(targetPath);
   if (isChunkLoadFailed) {
-    router.replace(targetPath);
+    window.location.replace(window.location.href);
+    //  router.replace(targetPath);
   }
 });
 

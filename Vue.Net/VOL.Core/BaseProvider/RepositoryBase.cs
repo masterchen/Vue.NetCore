@@ -331,11 +331,13 @@ namespace VOL.Core.BaseProvider
         {
             if (properties != null && properties.Length > 0)
             {
-                string keyName = typeof(TSource).GetKeyName();
+                PropertyInfo[] entityProperty = typeof(TSource).GetProperties();
+                string keyName = entityProperty.GetKeyName();
                 if (properties.Contains(keyName))
                 {
                     properties = properties.Where(x => x != keyName).ToArray();
                 }
+                properties = properties.Where(x => entityProperty.Select(s => s.Name).Contains(x)).ToArray();
             }
             foreach (TSource item in entities)
             {
@@ -344,15 +346,46 @@ namespace VOL.Core.BaseProvider
                     DbContext.Entry<TSource>(item).State = EntityState.Modified;
                     continue;
                 }
+                var entry = DbContext.Entry(item);
                 properties.ToList().ForEach(x =>
                 {
-                    DbContext.Entry(item).Property(x).IsModified = true;
+                    entry.Property(x).IsModified = true;
                 });
-
             }
-            if (saveChanges)
+            if (!saveChanges) return 0;
+
+            //2020.04.24增加更新时并行重试处理
+            try
+            {
+                // Attempt to save changes to the database
                 return DbContext.SaveChanges();
-            return 0;
+            }
+            catch (DbUpdateConcurrencyException ex)
+            {
+                int affectedRows = 0;
+                foreach (var entry in ex.Entries)
+                {
+                    var proposedValues = entry.CurrentValues;
+
+                    var databaseValues = entry.GetDatabaseValues();
+                    //databaseValues == null说明数据已被删除
+                    if (databaseValues != null)
+                    {
+                        foreach (var property in properties == null
+                            || properties.Length == 0 ? proposedValues.Properties
+                            : proposedValues.Properties.Where(x => properties.Contains(x.Name)))
+                        {
+                            var proposedValue = proposedValues[property];
+                            var databaseValue = databaseValues[property];
+                        }
+                        affectedRows++;
+                        entry.OriginalValues.SetValues(databaseValues);
+                    }
+                }
+                if (affectedRows == 0) return 0;
+
+                return DbContext.SaveChanges();
+            }
         }
 
 
@@ -533,12 +566,12 @@ namespace VOL.Core.BaseProvider
             //  BulkInsert(entities.ToDataTable(), typeof(T).GetEntityTableName(), null);
         }
 
-        public virtual int SaverChanges()
+        public virtual int SaveChanges()
         {
             return EFContext.SaveChanges();
         }
 
-        public virtual Task<int> SaverChangesAsync()
+        public virtual Task<int> SaveChangesAsync()
         {
             return EFContext.SaveChangesAsync();
         }
@@ -571,24 +604,20 @@ namespace VOL.Core.BaseProvider
                   parameters.
                   Select(x => ((DbParameter)x).ParameterName + (((DbParameter)x).Direction.ToString() == "Output" ? " Output" : "")));
             }
-            return DBSet.FromSql($"{sql}", parameters).ToList();
+            return null;
+            //    return DBSet.FromSql($"{sql}", parameters).ToList();
         }
-
 
         public virtual int ExecuteSqlCommand(string sql, params SqlParameter[] sqlParameters)
         {
-            //直接拼接防注入的sql
-            //string userName = "admin";
-            //sql = $@"SELECT * FROM Sys_user WHERE Name = {userName}";
-            return DbContext.Database.ExecuteSqlCommand(sql, sqlParameters);
+            return DbContext.Database.ExecuteSqlRaw(sql, sqlParameters);
         }
 
         public virtual List<TEntity> FromSql(string sql, params SqlParameter[] sqlParameters)
         {
-            return DBSet.FromSql(sql, sqlParameters).ToList();
+            return null;
+            // return DBSet.FromSql(sql, sqlParameters).ToList();
         }
-
-
 
     }
 }

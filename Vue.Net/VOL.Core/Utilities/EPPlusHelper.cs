@@ -17,14 +17,21 @@ namespace VOL.Core.Utilities
 {
     public class EPPlusHelper
     {
+        /// <summary>
+        /// 导入模板(仅限框架导出模板使用)(202.05.07)
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="path"></param>
+        /// <param name="exportColumns">指定导出的列</param>
+        /// <param name="ignoreColumns">忽略不导出的列(如果设置了exportColumns,ignoreColumns不会生效)</param>
+        /// <returns></returns>
 
-
-        public static WebResponseContent ReadToDataTable<T>(string path, List<string> ignoreTemplate)
+        public static WebResponseContent ReadToDataTable<T>(string path, Expression<Func<T, object>> exportColumns = null, List<string> ignoreTemplate = null)
         {
             WebResponseContent responseContent = new WebResponseContent();
 
             FileInfo file = new FileInfo(path);
-            if (!file.Exists)  return responseContent.Error("未找到上传的文件,请重新上传");
+            if (!file.Exists) return responseContent.Error("未找到上传的文件,请重新上传");
 
             List<T> entities = new List<T>();
             using (ExcelPackage package = new ExcelPackage(file))
@@ -34,12 +41,19 @@ namespace VOL.Core.Utilities
                     return responseContent.Error("未导入数据");
                 List<CellOptions> cellOptions = GetExportColumnInfo(typeof(T).GetEntityTableName(), false, false);
                 //设置忽略的列
-                if (ignoreTemplate != null)
+                if (exportColumns != null)
+                {
+                    cellOptions = cellOptions
+                        .Where(x => exportColumns.GetExpressionToArray().Select(s => s.ToLower()).Contains(x.ColumnName.ToLower()))
+                        .ToList();
+                }
+                else if (ignoreTemplate != null)
                 {
                     cellOptions = cellOptions
                         .Where(x => !ignoreTemplate.Select(s => s.ToLower()).Contains(x.ColumnName.ToLower()))
                         .ToList();
                 }
+
 
                 ExcelWorksheet sheetFirst = package.Workbook.Worksheets.FirstOrDefault();
 
@@ -93,7 +107,7 @@ namespace VOL.Core.Utilities
                             if (key == null)//&& options.Requierd
                             {
                                 //小于20个字典项，直接提示所有可选value
-                                string values = options.KeyValues.Count < 20 ? (string.Join(',', options.KeyValues.Select(s => s.Value))) : "";
+                                string values = options.KeyValues.Count < 20 ? (string.Join(',', options.KeyValues.Select(s => s.Value))) : options.ColumnCNName;
                                 return responseContent.Error($"第{m}行[{options.ColumnCNName}]验证未通过,必须是字典数据中[{values}]的值。");
                             }
                             //将值设置为数据字典的Key,如果导入为是/否字典项，存在表中应该对为1/0
@@ -182,21 +196,49 @@ namespace VOL.Core.Utilities
 
 
         /// <summary>
-        /// 下载导出模板
+        /// 下载导出模板(仅限框架导出模板使用)(202.05.07)
         /// </summary>
         /// <typeparam name="T"></typeparam>
-        /// <param name="cellOptions"></param>
-        /// <param name="ignoreNames"></param>
-        /// <param name="savePath"></param>
-        /// <param name="fileName"></param>
+        /// <param name="exportColumns">指定导出的列</param>
+        /// <param name="ignoreColumns">忽略不导出的列(如果设置了exportColumns,ignoreColumns不会生效)</param>
+        /// <param name="savePath">导出文件的绝对路径</param>
+        /// <param name="fileName">导出的文件名+后缀,如:123.xlsx</param>
         /// <returns></returns>
-        public static string ExportTemplate<T>(List<string> ignoreNames, string savePath, string fileName)
+        public static string ExportTemplate<T>(List<string> exportColumns, List<string> ignoreColumns, string savePath, string fileName)
         {
-            return Export<T>(null, ignoreNames, savePath, fileName, true);
+            return Export<T>(null, exportColumns, ignoreColumns, savePath, fileName, true);
         }
 
         /// <summary>
-        /// 
+        /// 下载导出模板(仅限框架导出模板使用)(202.05.07)
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="exportColumns">指定导出的列</param>
+        /// <param name="ignoreColumns">忽略不导出的列(如果设置了exportColumns,ignoreColumns不会生效)</param>
+        /// <param name="savePath">导出文件的绝对路径</param>
+        /// <param name="fileName">导出的文件名+后缀,如:123.xlsx</param>
+        /// <returns></returns>
+        public static string ExportTemplate<T>(Expression<Func<T, object>> exportColumns, List<string> ignoreColumns, string savePath, string fileName)
+        {
+            return Export<T>(null, exportColumns?.GetExpressionToArray(), ignoreColumns, savePath, fileName, true);
+        }
+
+        /// <summary>
+        /// 下载导出模板(仅限框架导出模板使用)(202.05.07)
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="ignoreColumns">忽略不导出的列</param>
+        /// <param name="savePath">导出文件的绝对路径</param>
+        /// <param name="fileName">导出的文件名+后缀,如:123.xlsx</param>
+        /// <returns></returns>
+        public static string ExportTemplate<T>(List<string> ignoreColumns, string savePath, string fileName)
+        {
+            return Export<T>(null, null, ignoreColumns, savePath, fileName, true);
+        }
+
+        /// <summary>
+        /// 导出excel文件(导入功能里的导出模板也使用的此功能，list传的null，导出的文件只有模板的标题)
+        /// (202.05.07)
         /// </summary>
         /// <typeparam name="T"></typeparam>
         /// <param name="list"></param>
@@ -208,45 +250,69 @@ namespace VOL.Core.Utilities
         /// <returns></returns>
         public static string Export<T>(List<T> list, Expression<Func<T, object>> ignore, string savePath, string fileName, bool template = false)
         {
-            return Export(list, ignore?.GetExpressionProperty(), savePath, fileName, template);
+            return Export(list, null, ignore?.GetExpressionProperty(), savePath, fileName, template);
         }
+
         /// <summary>
-        /// 
+        /// 导出excel文件(导入功能里的导出模板也使用的此功能，list传的null，导出的文件只有模板的标题)
+        /// (202.05.07)
         /// </summary>
         /// <typeparam name="T"></typeparam>
-        /// <param name="list"></param>
-        ///<param name="ignoreNames">忽略不导出的字段</param>
-        /// <param name="columnCNName">导出的所有列名， ValueTuple<string, int>为列中文名字，及表格宽度</param>
-        /// <param name="dicNos">为字典编号，字典name/value</param>
+        /// <param name="list">导出的对象</param>
+        /// <param name="exportColumns">指定导出的列</param>
+        /// <param name="ignoreColumns">忽略不导出的列(如果设置了exportColumns,ignoreColumns不会生效)</param>
         /// <param name="savePath">保存路径</param>
         /// <param name="fileName">保存的文件名</param>
         ///  <param name="template">是否为下载模板</param>
         /// <returns></returns>
-        public static string Export<T>(List<T> list, IEnumerable<string> ignoreNames, string savePath, string fileName, bool template = false)
+        public static string Export<T>(List<T> list, IEnumerable<string> exportColumns, IEnumerable<string> ignoreColumns, string savePath, string fileName, bool template = false)
         {
             if (!Directory.Exists(savePath)) Directory.CreateDirectory(savePath);
 
             //获取代码生成器对应的配置信息
-            List<CellOptions> cellOptions = GetExportColumnInfo(typeof(T).GetEntityTableName(), template);
-
+            //  List<CellOptions> cellOptions = GetExportColumnInfo(typeof(T).GetEntityTableName(), template);
+            //2020.06.02修复使用表别名时读取不到配置信息
+            List<CellOptions> cellOptions = GetExportColumnInfo(typeof(T).Name, template);
             string fullPath = savePath + fileName;
             //获取所有有值的数据源
             var dicNoKeys = cellOptions
                  .Where(x => !string.IsNullOrEmpty(x.DropNo) && x.KeyValues != null && x.KeyValues.Keys.Count > 0)
                  .Select(x => new { x.DropNo, x.ColumnName }).Distinct().ToList();
 
-            //List<string> ignoreColumn = typeof(T).GetProperties().Where(x => !cellOptions.Select(s => s.ColumnName).Contains(x.Name)).Select(s => s.Name).ToList();
+            List<PropertyInfo> propertyInfo = null;
 
-            List<PropertyInfo> propertyInfo = (
-                ignoreNames == null
-               ? typeof(T).GetProperties()
-               .ToList()
-               : typeof(T).GetProperties()
-               .Where(x => !ignoreNames.Select(g => g.ToLower()).Contains(x.Name.ToLower())))
-               .Where(x => cellOptions.Select(s => s.ColumnName) //获取代码生成器配置的列
-               .Contains(x.Name)).ToList();
+            /*导出时，代码生成器中的表配置信息Sys_TableInfo/Sys_TableColumn必须与当前数据库相同，否则导出来可能没有数据*/
 
-
+            //2020.06.02优化读取导出列配置信息
+            //导出指定的列
+            //如果指定了导出的标题列，忽略的标题列不再起作用
+            if (exportColumns != null && exportColumns.Count() > 0)
+            {
+                propertyInfo =
+                   typeof(T).GetProperties()
+                  .Where(x => exportColumns.Select(g => g.ToLower()).Contains(x.Name.ToLower())).ToList();
+                //.Where(x => cellOptions.Select(s => s.ColumnName) //获取代码生成器配置的列
+                //.Contains(x.Name)).ToList();
+            }
+            else if (ignoreColumns != null && ignoreColumns.Count() > 0)
+            {
+                propertyInfo = typeof(T).GetProperties()
+                  .Where(x => !ignoreColumns.Select(g => g.ToLower()).Contains(x.Name.ToLower()))
+                  .Where(x => cellOptions.Select(s => s.ColumnName).Contains(x.Name)) //获取代码生成器配置的列
+                  .ToList();
+            }
+            else
+            {
+                //默认导出代码生成器中配置【是否显示】=是的列
+                propertyInfo = typeof(T).GetProperties()
+                  .Where(x => cellOptions.Select(s => s.ColumnName).Contains(x.Name)) //获取代码生成器配置的列
+                  .ToList();
+                /*
+                 * 如果propertyInfo查出来的长度=0
+                 * 1、代码生成器中的配置信息是否同步到当前数据库
+                 * 2、代码生成器中的配置列名与model的字段是否大小写一致
+                 */
+            }
             string[] dateArr = null;
             if (!template)
             {
@@ -344,8 +410,11 @@ namespace VOL.Core.Utilities
         private static List<CellOptions> GetExportColumnInfo(string tableName, bool temlate = false, bool filterKeyValue = true)
         {
             //&& x.IsDisplay == 1&&x.IsReadDataset==0只导出代码生器中设置为显示并且不是只读的列，可根据具体业务设置导出列
+            // && x.IsReadDataset == 0
+            //2020.06.02增加不区分大表名大小写: 原因mysql可能是表名是小写，但生成model的时候强制大写
+            //x => x.TableName.ToLower() == tableName.ToLower()
             List<CellOptions> cellOptions = DBServerProvider.DbContext.Set<Sys_TableColumn>()
-              .Where(x => x.TableName == tableName && x.IsDisplay == 1 && x.IsReadDataset == 0).Select(c => new CellOptions()
+              .Where(x => x.TableName.ToLower() == tableName.ToLower() && x.IsDisplay == 1).Select(c => new CellOptions()
               {
                   ColumnName = c.ColumnName,
                   ColumnCNName = c.ColumnCnName,
@@ -360,26 +429,21 @@ namespace VOL.Core.Utilities
 
             if (dicNos.Count() == 0) return cellOptions;
 
-            List<Sys_Dictionary> dictionaries = DictionaryManager.GetDictionaries(dicNos);
+            var dictionaries = DictionaryManager.GetDictionaries(dicNos);
             //获取绑定字典数据源下拉框的值
             foreach (string dicNo in dicNos.Distinct())
             {
-                Dictionary<string, string> keyValues = null;
-                var query = dictionaries
+                Dictionary<string, string> keyValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                List<Sys_DictionaryList> dictionaryLists = dictionaries
                    .Where(x => x.DicNo == dicNo && x.Sys_DictionaryList != null)
-                   .Select(s => s.Sys_DictionaryList);
-                //   .FirstOrDefault()
-                //.Where(w => (filterKeyValue && w.DicName != w.DicValue)|| !filterKeyValue) //key==value相同的则不处理
-                //   .ToDictionary(r => r.DicValue, r => r.DicName);
-                if (filterKeyValue)
+                   .Select(s => s.Sys_DictionaryList).FirstOrDefault();
+                if (dictionaryLists == null || dictionaryLists.Count == 0) continue;
+                foreach (var item in dictionaryLists)
                 {
-                    keyValues = query.FirstOrDefault()?
-                     .Where(w => w.DicName != w.DicValue)? //key==value相同的则不处理
-                      .ToDictionary(r => r.DicValue, r => r.DicName);
-                }
-                else
-                {
-                    keyValues = query.FirstOrDefault()?.ToDictionary(r => r.DicValue, r => r.DicName);
+                    ////filterKeyValue为true过滤keyvalue相不的项,key==value相同的则不处理
+                    if (filterKeyValue && item.DicName == item.DicValue) continue;
+                    if (keyValues.ContainsKey(item.DicValue)) continue;
+                    keyValues.Add(item.DicValue, item.DicName);
                 }
 
                 foreach (CellOptions options in cellOptions.Where(x => x.DropNo == dicNo))

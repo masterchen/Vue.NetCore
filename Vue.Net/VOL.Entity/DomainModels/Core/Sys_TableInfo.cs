@@ -6,6 +6,7 @@ using System.Collections.Generic;
 
 namespace VOL.Entity.DomainModels
 {
+    [Table("Sys_TableInfo")]
     [EntityAttribute(DetailTable = new Type[] { typeof(Sys_TableColumn) })]
     public class Sys_TableInfo : BaseEntity
     {
@@ -64,6 +65,7 @@ namespace VOL.Entity.DomainModels
         [Editable(true)]
         public string CnName { get; set; }
 
+        [ForeignKey("Table_Id")]
         public List<Sys_TableColumn> TableColumns { get; set; }
 
     }

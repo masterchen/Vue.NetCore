@@ -13,7 +13,8 @@ using VOL.Entity.SystemModels;
 
 namespace VOL.Entity.DomainModels
 {
-    [Entity(TableCnName = "新增编辑表单")]
+    [Table("App_ReportPrice")]
+    [Entity(TableCnName = "新增编辑表单",TableName = "App_ReportPrice")]
     public class App_ReportPrice:BaseEntity
     {
         /// <summary>
@@ -29,8 +30,8 @@ namespace VOL.Entity.DomainModels
        ///品种
        /// </summary>
        [Display(Name ="品种")]
-       [MaxLength(20)]
-       [Column(TypeName="nvarchar(20)")]
+       [MaxLength(40)]
+       [Column(TypeName="nvarchar(40)")]
        [Editable(true)]
        [Required(AllowEmptyStrings=false)]
        public string Variety { get; set; }
@@ -39,27 +40,27 @@ namespace VOL.Entity.DomainModels
        ///月龄
        /// </summary>
        [Display(Name ="月龄")]
-       [MaxLength(50)]
-       [Column(TypeName="nvarchar(50)")]
+       [MaxLength(100)]
+       [Column(TypeName="nvarchar(100)")]
        [Editable(true)]
        [Required(AllowEmptyStrings=false)]
        public string Age { get; set; }
 
        /// <summary>
-       ///报价城市
+       ///城市
        /// </summary>
-       [Display(Name ="报价城市")]
-       [MaxLength(15)]
-       [Column(TypeName="nvarchar(15)")]
+       [Display(Name ="城市")]
+       [MaxLength(30)]
+       [Column(TypeName="nvarchar(30)")]
        [Editable(true)]
        [Required(AllowEmptyStrings=false)]
        public string City { get; set; }
 
        /// <summary>
-       ///上报价格
+       ///价格
        /// </summary>
-       [Display(Name ="上报价格")]
-       [Column(TypeName="decimal")]
+       [Display(Name ="价格")]
+       [Column(TypeName="numeric")]
        [Editable(true)]
        [Required(AllowEmptyStrings=false)]
        public decimal Price { get; set; }
@@ -68,8 +69,8 @@ namespace VOL.Entity.DomainModels
        ///上报人
        /// </summary>
        [Display(Name ="上报人")]
-       [MaxLength(30)]
-       [Column(TypeName="nvarchar(30)")]
+       [MaxLength(60)]
+       [Column(TypeName="nvarchar(60)")]
        [Editable(true)]
        public string Creator { get; set; }
 
@@ -107,8 +108,8 @@ namespace VOL.Entity.DomainModels
        ///审核人
        /// </summary>
        [Display(Name ="审核人")]
-       [MaxLength(20)]
-       [Column(TypeName="nvarchar(20)")]
+       [MaxLength(40)]
+       [Column(TypeName="nvarchar(40)")]
        public string Auditor { get; set; }
 
        /// <summary>
@@ -134,11 +135,11 @@ namespace VOL.Entity.DomainModels
        public int? ModifyID { get; set; }
 
        /// <summary>
-       ///修改人
+       ///测试
        /// </summary>
-       [Display(Name ="修改人")]
-       [MaxLength(30)]
-       [Column(TypeName="nvarchar(30)")]
+       [Display(Name ="测试")]
+       [MaxLength(60)]
+       [Column(TypeName="nvarchar(60)")]
        public string Modifier { get; set; }
 
        /// <summary>

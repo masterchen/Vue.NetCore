@@ -1,19 +1,25 @@
 ﻿using DairyStar.Builder.Utility;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyModel;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations.Schema;
 using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Runtime.Loader;
 using System.Text;
 using System.Threading.Tasks;
 using VOL.Core.Const;
+using VOL.Core.DBManager;
 using VOL.Core.Enums;
 using VOL.Core.Extensions;
 using VOL.Core.ManageUser;
 using VOL.Core.Utilities;
 using VOL.Entity.DomainModels;
 using VOL.Entity.DomainModels.Sys;
+using VOL.Entity.SystemModels;
 
 namespace DairyStar.Builder.Services
 {
@@ -41,7 +47,7 @@ namespace DairyStar.Builder.Services
             {
                 if (webProject != null)
                     return webProject;
-                webProject = ProjectPath.GetLastIndexOfDirectoryName(".WebApi")?? ProjectPath.GetLastIndexOfDirectoryName("Api")?? ProjectPath.GetLastIndexOfDirectoryName(".Web");
+                webProject = ProjectPath.GetLastIndexOfDirectoryName(".WebApi") ?? ProjectPath.GetLastIndexOfDirectoryName("Api") ?? ProjectPath.GetLastIndexOfDirectoryName(".Web");
                 if (webProject == null)
                 {
                     throw new Exception("未获取到以.WebApi结尾的项目名称,无法创建页面");
@@ -94,22 +100,49 @@ namespace DairyStar.Builder.Services
         }
 
         /// <summary>
+        /// 2020.05.17增加mysql获取表结构时区分当前所在数据库
+        /// </summary>
+        /// <returns></returns>
+        private string GetMysqlTableSchema()
+        {
+            try
+            {
+                string dbName = DBServerProvider.GetConnectionString().Split("Database=")[1].Split(";")[0]?.Trim();
+                if (!string.IsNullOrEmpty(dbName))
+                {
+                    dbName = $" and table_schema = '{dbName}' ";
+                }
+                return dbName;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"获取mysql数据库名异常:{ex.Message}");
+                return "";
+            }
+        }
+
+        /// <summary>
         /// 获取Mysql表结构信息
+        /// 2020.06.14增加对mysql数据类型double区分
         /// </summary>
         /// <returns></returns>
         private string GetMySqlModelInfo()
         {
             return $@"SELECT
+DISTINCT
            CONCAT(NUMERIC_PRECISION,',',NUMERIC_SCALE) as Prec_Scale,
         CASE
-                WHEN data_type IN( 'BIT', 'BOOL', 'TINYINT','bit', 'bool', 'tinyint' ) THEN
-                'byte'
+                 WHEN data_type IN( 'BIT', 'BOOL','bit', 'bool') THEN
+                'bool'
+				WHEN data_type in('tinyint', 'TINYINT') THEN 'sbyte'
                 WHEN data_type IN('MEDIUMINT','mediumint', 'int','INT','year', 'Year') THEN
                 'int'
                 WHEN data_type in ( 'BIGINT','bigint') THEN
                 'bigint'
-                WHEN data_type IN('FLOAT', 'DOUBLE', 'DECIMAL','float', 'double', 'decimal') THEN
+                WHEN data_type IN('FLOAT',  'DECIMAL','float', 'decimal') THEN
                 'decimal'
+							 WHEN data_type IN( 'DOUBLE', 'double') THEN
+                'double'
                 WHEN data_type IN('CHAR', 'VARCHAR', 'TINY TEXT', 'TEXT', 'MEDIUMTEXT', 'LONGTEXT', 'TINYBLOB', 'BLOB', 'MEDIUMBLOB', 'LONGBLOB', 'Time','char', 'varchar', 'tiny text', 'text', 'mediumtext', 'longtext', 'tinyblob', 'blob', 'mediumblob', 'longblob', 'time') THEN
                 'nvarchar'
                 WHEN data_type IN('Date', 'DateTime', 'TimeStamp','date', 'datetime', 'timestamp') THEN
@@ -118,8 +151,9 @@ namespace DairyStar.Builder.Services
             FROM
                 information_schema.COLUMNS
             WHERE
-                table_name = ?tableName;";
+                table_name = ?tableName {GetMysqlTableSchema()};";
         }
+
 
         /// <summary>
         /// 获取SqlServer表结构信息
@@ -147,6 +181,76 @@ namespace DairyStar.Builder.Services
                                                                                   AND epTwo.name = 'MS_Description'
                                       WHERE     obj.name =@tableName) AS t";
         }
+        /// <summary>
+        /// 获取PgSQl表结构信息
+        /// </summary>
+        /// <returns></returns>
+        private string GetPgSqlModelInfo()
+        {
+            throw new Exception("开发中");
+            //            return $@"
+            //	SELECT DISTINCT
+            //    a.attnum as num,
+            //    a.attname as name,
+            //    format_type(a.atttypid, a.atttypmod) as typ,
+            //    a.attnotnull as notnull, 
+            //    com.description as comment,
+            //    coalesce(i.indisprimary,false) as primary_key,
+            //    def.adsrc as default
+            //FROM pg_attribute a 
+            //JOIN pg_class pgc ON pgc.oid = a.attrelid
+            //LEFT JOIN pg_index i ON 
+            //    (pgc.oid = i.indrelid AND i.indkey[0] = a.attnum)
+            //LEFT JOIN pg_description com on 
+            //    (pgc.oid = com.objoid AND a.attnum = com.objsubid)
+            //LEFT JOIN pg_attrdef def ON 
+            //    (a.attrelid = def.adrelid AND a.attnum = def.adnum)
+            //WHERE a.attnum > 0 AND pgc.oid = a.attrelid
+            //AND pg_table_is_visible(pgc.oid)
+            //AND NOT a.attisdropped
+            //AND pgc.relname = @tableName  -- Your table name here
+            //ORDER BY a.attnum;";
+        }
+
+        private WebResponseContent ExistsTable(string tableName, string tableTrueName)
+        {
+            WebResponseContent webResponse = new WebResponseContent(true);
+            //如果是第一次创建model，此处反射获取到的是已经缓存过的文件，必须重新运行项目否则新增的文件无法做判断文件是否创建，需要重新做反射实际文件，待修改...
+            var compilationLibrary = DependencyContext
+                .Default
+                .CompileLibraries
+                .Where(x => !x.Serviceable && x.Type == "project");
+            foreach (var _compilation in compilationLibrary)
+            {
+                try
+                {
+                    foreach (var entity in AssemblyLoadContext.Default
+                .LoadFromAssemblyName(new AssemblyName(_compilation.Name))
+                .GetTypes().Where(x => x.GetTypeInfo().BaseType != null
+                    && x.BaseType == typeof(BaseEntity)))
+                    {
+                        if (entity.Name == tableTrueName && !string.IsNullOrEmpty(tableName) && tableName != tableTrueName)
+                            return webResponse.Error($"实际表名【{tableTrueName }】已创建实体，不能创建别名【{tableName}】实体");
+
+                        if (entity.Name != tableName)
+                        {
+                            var tableAttr = entity.GetCustomAttribute<TableAttribute>();
+                            if (tableAttr != null && tableAttr.Name == tableTrueName)
+                            {
+                                return webResponse.Error($"实际表名【{tableTrueName }】已被【{entity.Name}】创建建实体,不能创建别名【{tableName}】实体,请将别名更换为【{entity.Name}】");
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+
+                    Console.WriteLine("查找文件异常：" + ex.Message);
+                }
+            }
+            return webResponse;
+
+        }
 
         /// <summary>
         /// 生成实体Model
@@ -164,10 +268,43 @@ namespace DairyStar.Builder.Services
             if (!webResponse.Status)
                 return webResponse.Message;
 
+            string tableName = sysTableInfo.TableName;
+            webResponse = ExistsTable(tableName, sysTableInfo.TableTrueName);
+            if (!webResponse.Status)
+            {
+                return webResponse.Message;
+            }
+            if (!string.IsNullOrEmpty(sysTableInfo.TableTrueName) && sysTableInfo.TableTrueName != tableName)
+            {
+                tableName = sysTableInfo.TableTrueName;
+            }
+
             List<Sys_TableColumn> list = sysTableInfo.TableColumns;
-            List<TableColumnInfo> tableColumnInfoList = repository.DapperContext.QueryList<TableColumnInfo>(
-                DBType.Name == DbCurrentType.MySql.ToString() ? GetMySqlModelInfo() : GetSqlServerModelInfo(),
-                new { tableName = sysTableInfo.TableName });
+            List<TableColumnInfo> tableColumnInfoList = new List<TableColumnInfo>();
+            switch (DBType.Name)
+            {
+                case "MySql":
+                    {
+                        tableColumnInfoList = repository.DapperContext.QueryList<TableColumnInfo>(
+                            GetMySqlModelInfo(), new { tableName = tableName });
+                        break;
+                    }
+                case "SqlServer":
+                    {
+                        tableColumnInfoList = repository.DapperContext.QueryList<TableColumnInfo>(
+                             GetSqlServerModelInfo(), new { tableName = tableName });
+                        break;
+                    }
+                case "PgSql":
+                    {
+                        tableColumnInfoList = repository.DapperContext.QueryList<TableColumnInfo>(
+                            GetPgSqlModelInfo(), new { tableName = tableName });
+                        break;
+                    }
+                default: break;
+            }
+
+
 
             string msg = CreateEntityModel(list, sysTableInfo, tableColumnInfoList, 1);
             if (msg != "")
@@ -191,9 +328,13 @@ namespace DairyStar.Builder.Services
         public WebResponseContent SaveEidt(Sys_TableInfo sysTableInfo)
         {
             WebResponseContent webResponse = ValidColumnString(sysTableInfo);
-            if (!webResponse.Status)  return webResponse;
-
-            if (sysTableInfo.TableColumns!=null)
+            if (!webResponse.Status) return webResponse;
+            //2020.05.07新增禁止选择上级角色为自己
+            if (sysTableInfo.Table_Id == sysTableInfo.ParentId)
+            {
+                return WebResponseContent.Instance.Error($"父级id不能为自己");
+            }
+            if (sysTableInfo.TableColumns != null)
             {
                 sysTableInfo.TableColumns.ForEach(x =>
                 {
@@ -211,6 +352,83 @@ namespace DairyStar.Builder.Services
             return repository.UpdateRange<Sys_TableColumn>(sysTableInfo, true, true, null, null, true);
         }
 
+        /// <summary>
+        /// 将表结构重新同步到代码生成配置
+        /// </summary>
+        /// <param name="tableName"></param>
+        /// <returns></returns>
+        public async Task<WebResponseContent> SyncTable(string tableName)
+        {
+            WebResponseContent webResponse = new WebResponseContent();
+            if (string.IsNullOrEmpty(tableName)) return webResponse.OK("表名不能为空");
+
+            Sys_TableInfo tableInfo = repository.FindAsIQueryable(x => x.TableName == tableName)
+          .Include(o => o.TableColumns).FirstOrDefault();
+            if (tableInfo == null)
+                return webResponse.Error("未获取到【" + tableName + "】的配置信息，请使用新建功能");
+            if (!string.IsNullOrEmpty(tableInfo.TableTrueName) && tableInfo.TableTrueName != tableName)
+            {
+                tableName = tableInfo.TableTrueName;
+            }
+
+            string sql;
+            if (DBType.Name.ToLower() == DbCurrentType.MySql.ToString().ToLower())
+            {
+                sql = GetMySqlStructure(tableName);
+            }
+            else if (DBType.Name.ToLower() == DbCurrentType.PgSql.ToString().ToLower())
+            {
+                throw new Exception("开发中");
+            }
+            else
+            {
+                sql = GetSqlServerStructure(tableName);
+            }
+            //获取表结构
+            List<Sys_TableColumn> columns = repository.DapperContext
+                  .QueryList<Sys_TableColumn>(sql, new { tableName });
+            if (columns == null || columns.Count == 0)
+                return webResponse.Error("未获取到【" + tableName + "】表结构信息，请确认表是否存在");
+
+
+            //获取现在配置好的表结构
+            List<Sys_TableColumn> detailList = tableInfo.TableColumns ?? new List<Sys_TableColumn>();
+            List<Sys_TableColumn> addColumns = new List<Sys_TableColumn>();
+            List<Sys_TableColumn> updateColumns = new List<Sys_TableColumn>();
+            foreach (Sys_TableColumn item in columns)
+            {
+                Sys_TableColumn tableColumn = detailList.Where(x => x.ColumnName == item.ColumnName)
+                    .FirstOrDefault();
+                //新加的列
+                if (tableColumn == null)
+                {
+                    item.TableName = tableInfo.TableName;
+                    item.Table_Id = tableInfo.Table_Id;
+                    addColumns.Add(item);
+                    continue;
+                }
+                //修改了数据类库或字段长度
+                if (item.ColumnType != tableColumn.ColumnType || item.Maxlength != tableColumn.Maxlength || (item.IsNull ?? 0) != (tableColumn.IsNull ?? 0))
+                {
+                    tableColumn.ColumnType = item.ColumnType;
+                    tableColumn.Maxlength = item.Maxlength;
+                    tableColumn.IsNull = item.IsNull;
+                    updateColumns.Add(tableColumn);
+                }
+            }
+            //删除的列
+            List<Sys_TableColumn> delColumns = detailList.Where(a => !columns.Select(c => c.ColumnName).Contains(a.ColumnName)).ToList();
+            if (addColumns.Count + delColumns.Count + updateColumns.Count == 0)
+            {
+                return webResponse.Error("【" + tableName + "】表结构未发生变化");
+            }
+            repository.AddRange(addColumns);
+            repository.DbContext.Set<Sys_TableColumn>().RemoveRange(delColumns);
+            repository.UpdateRange(updateColumns, x => new { x.ColumnType, x.Maxlength, x.IsNull });
+            await repository.DbContext.SaveChangesAsync();
+
+            return webResponse.OK($"新加字段【{addColumns.Count}】个,删除字段【{delColumns.Count}】,修改字段【{updateColumns.Count}】");
+        }
 
         /// <summary>
         /// 生成Services/Repository与对应的Partial类
@@ -358,7 +576,7 @@ namespace DairyStar.Builder.Services
                     Dictionary<string, object> keyValues = new Dictionary<string, object>();
                     if (vue)
                     {
-                        keyValues.Add("columnType", s.columnType);
+                        //  keyValues.Add("columnType", s.columnType);
                         if (!string.IsNullOrEmpty(s.dataSource) && s.dataSource != "''")
                         {
                             keyValues.Add("dataKey", s.dataSource);
@@ -380,7 +598,7 @@ namespace DairyStar.Builder.Services
                         }
                         if (!string.IsNullOrEmpty(s.displayType) && s.displayType != "''")
                         {
-                            keyValues.Add("type", s.displayType);
+                            keyValues.Add("type", s.columnType == "img" ? s.columnType : s.displayType);
                         }
                     }
                     else
@@ -750,13 +968,14 @@ namespace DairyStar.Builder.Services
         /// <returns></returns>
         private string GetMySqlStructure(string tableName)
         {
-            return $@"SELECT
+            return $@"SELECT  DISTINCT
                     Column_Name AS ColumnName,
                      '{ tableName}'  as tableName,
 	                Column_Comment AS ColumnCnName,
                         CASE
-                        WHEN data_type IN('BIT', 'BOOL', 'TINYINT','bit', 'bool', 'tinyint' ) THEN
-                        'byte'
+                          WHEN data_type IN( 'BIT', 'BOOL', 'bit', 'bool') THEN
+                'bool'
+								WHEN data_type in('tinyint','TINYINT') THEN 'sbyte'
                         WHEN data_type IN('MEDIUMINT','mediumint', 'int','INT','year', 'Year') THEN
                     'int'
                     WHEN data_type in ( 'BIGINT','bigint') THEN
@@ -768,7 +987,7 @@ namespace DairyStar.Builder.Services
                     WHEN data_type IN('Date', 'DateTime', 'TimeStamp','date', 'datetime', 'timestamp') THEN
                     'DateTime' ELSE 'string'
                 END AS ColumnType,
-	            CHARACTER_MAXIMUM_LENGTH AS Maxlength,
+	              case WHEN CHARACTER_MAXIMUM_LENGTH>8000 THEN 0 ELSE CHARACTER_MAXIMUM_LENGTH end  AS Maxlength,
             CASE
                     WHEN COLUMN_KEY <> '' THEN  
                     1 ELSE 0
@@ -792,7 +1011,7 @@ namespace DairyStar.Builder.Services
                 FROM
                     information_schema.COLUMNS
                 WHERE
-                    table_name = ?tableName";
+                    table_name = ?tableName {GetMysqlTableSchema()}";
         }
 
         /// <summary>
@@ -854,7 +1073,7 @@ namespace DairyStar.Builder.Services
                             col.name AS ColumnName ,
                             CONVERT(NVARCHAR(100),ISNULL(ep.[value], '')) AS ColumnCNName,
                             t.name AS ColumnType ,
-                           CASE WHEN  col.length<1 THEN 20000 ELSE  col.length END  AS[Maxlength],
+                           CASE WHEN  col.length<1 THEN 0 ELSE  col.length END  AS[Maxlength],
                             CASE WHEN EXISTS (SELECT   1
                                                FROM dbo.sysindexes si
                                                         INNER JOIN dbo.sysindexkeys sik ON si.id = sik.id
@@ -964,17 +1183,16 @@ namespace DairyStar.Builder.Services
                 .QueryList<Sys_TableColumn>(
                 isMySql ? GetMySqlStructure(tableName) : GetSqlServerStructure(tableName),
                 new { tableName });
+
+            int orderNo = (columns.Count + 10) * 50;
+            for (int i = 0; i < columns.Count; i++)
+            {
+                columns[i].OrderNo = orderNo;
+                orderNo = orderNo - 50;
+            }
+
             SetMaxLength(columns);
             base.Add<Sys_TableColumn>(tableInfo, columns, false);
-            int maxColumnId = columns.Count == 0 ? 1 : columns.Max(x => x.ColumnId);
-
-            int idLength = maxColumnId.ToString().Length + 2;
-            int orderNo = "100000000000000000000".Substring(0, idLength).GetInt();
-            columns.ForEach(x =>
-            {
-                x.OrderNo = orderNo - x.ColumnId * 10 - 10;
-            });
-            repository.UpdateRange<Sys_TableColumn>(columns, x => new { x.OrderNo }, true);
             return tableInfo.Table_Id;
         }
 
@@ -1048,7 +1266,20 @@ namespace DairyStar.Builder.Services
                 sb.Append("title:'" + (string.IsNullOrEmpty(item.ColumnCnName) ? item.ColumnName : item.ColumnCnName) + "',");
                 if (vue)
                 {
-                    sb.Append("type:'" + (item.IsImage == 1 ? "img" : item.ColumnType.ToLower()) + "',");
+                    string colType = item.ColumnType.ToLower();
+                    if (item.IsImage == 1)
+                    {
+                        colType = "img";
+                    }
+                    else if (item.IsImage == 2)
+                    {
+                        colType = "excel";
+                    }
+                    else if (item.IsImage == 3)
+                    {
+                        colType = "file";
+                    }
+                    sb.Append("type:'" + colType + "',");
                     if (!string.IsNullOrEmpty(item.DropNo))
                     {
                         sb.Append("bind:{ key:'" + item.DropNo + "',data:[]},");
@@ -1189,7 +1420,7 @@ namespace DairyStar.Builder.Services
             bool addIgnore = false;
             foreach (Sys_TableColumn column in sysColumn)
             {
-                column.ColumnType = column.ColumnType.Trim();
+                column.ColumnType = (column.ColumnType ?? "").Trim();
                 AttributeBuilder.Append("/// <summary>");
                 AttributeBuilder.Append("\r\n");
                 AttributeBuilder.Append("       ///" + column.ColumnCnName + "");
@@ -1201,8 +1432,17 @@ namespace DairyStar.Builder.Services
                     string.IsNullOrEmpty(column.ColumnCnName) ? column.ColumnName : column.ColumnCnName
                     ) + "\")]");
                 AttributeBuilder.Append("\r\n");
-                if (column.ColumnType == "string")
+
+                TableColumnInfo tableColumnInfo = tableColumnInfoList.Where(x => x.ColumnName.ToLower().Trim() == column.ColumnName.ToLower().Trim()).FirstOrDefault();
+                if (tableColumnInfo != null && (tableColumnInfo.ColumnType == "varchar" && column.Maxlength > 8000)
+                             || (tableColumnInfo.ColumnType == "nvarchar" && column.Maxlength > 4000))
                 {
+                    column.Maxlength = 0;
+                }
+
+                if (column.ColumnType == "string" && column.Maxlength > 0 && column.Maxlength < 8000)
+                {
+
                     AttributeBuilder.Append("       [MaxLength(" + column.Maxlength + ")]");
                     AttributeBuilder.Append("\r\n");
                 }
@@ -1214,7 +1454,7 @@ namespace DairyStar.Builder.Services
                     AttributeBuilder.Append("\r\n");
                 }
                 //[Column(TypeName="bigint")]如果与字段类型不同会产生异常
-                TableColumnInfo tableColumnInfo = tableColumnInfoList.Where(x => x.ColumnName.ToLower().Trim() == column.ColumnName.ToLower().Trim()).FirstOrDefault();
+
                 if (tableColumnInfo != null)
                 {
                     if (!string.IsNullOrEmpty(tableColumnInfo.Prec_Scale) && !tableColumnInfo.Prec_Scale.EndsWith(",0"))
@@ -1222,25 +1462,39 @@ namespace DairyStar.Builder.Services
                         AttributeBuilder.Append("       [DisplayFormat(DataFormatString=\"" + tableColumnInfo.Prec_Scale + "\")]");
                         AttributeBuilder.Append("\r\n");
                     }
-                  
 
                     if ((column.IsKey == 1 && (column.ColumnType == "string" || column.ColumnType == "uniqueidentifier")) ||
-                        tableColumnInfo.ColumnType.ToLower() == "guid")
+                        tableColumnInfo.ColumnType.ToLower() == "guid"
+                        || (IsMysql() && column.ColumnType == "string" && column.Maxlength == 36))
                     {
                         tableColumnInfo.ColumnType = "uniqueidentifier";
                     }
 
                     string maxLength = string.Empty;
-                    if (column.IsKey != 1 && column.ColumnType.ToLower() == "string" && column.Maxlength > 0)
+                    if (tableColumnInfo.ColumnType != "uniqueidentifier")
                     {
-                        maxLength = "(" + column.Maxlength + ")";
-                    }
+                        if (column.IsKey != 1 && column.ColumnType.ToLower() == "string")
+                        {
+                            //没有指定长度的字符串字段 ，如varchar,nvarchar，text等都默认生成varchar(max),nvarchar(max)
+                            if (column.Maxlength <= 0
+                                || (tableColumnInfo.ColumnType == "varchar" && column.Maxlength > 8000)
+                                || (tableColumnInfo.ColumnType == "nvarchar" && column.Maxlength > 4000))
+                            {
+                                maxLength = "(max)";
+                            }
+                            else
+                            {
+                                maxLength = "(" + column.Maxlength + ")";
+                            }
 
+                        }
+                    }
                     AttributeBuilder.Append("       [Column(TypeName=\"" + tableColumnInfo.ColumnType + maxLength + "\")]");
                     AttributeBuilder.Append("\r\n");
 
 
-                    if ((tableColumnInfo.ColumnType == "int" || tableColumnInfo.ColumnType == "bigint" || tableColumnInfo.ColumnType == "long") && column.ColumnType.ToLower() == "string")
+                    //if ((tableColumnInfo.ColumnType == "int" || tableColumnInfo.ColumnType == "bigint" || tableColumnInfo.ColumnType == "long") && column.ColumnType.ToLower() == "string")
+                    if (tableColumnInfo.ColumnType == "int" || tableColumnInfo.ColumnType == "bigint" || tableColumnInfo.ColumnType == "long")
                     {
                         column.ColumnType = tableColumnInfo.ColumnType == "int" ? "int" : "long";
                     }
@@ -1262,7 +1516,7 @@ namespace DairyStar.Builder.Services
                     AttributeBuilder.Append("\r\n");
                 }
                 string columnType = (column.ColumnType == "Date" ? "DateTime" : column.ColumnType).Trim();
-                if (tableColumnInfo.ColumnType.ToLower() == "guid")
+                if (tableColumnInfo?.ColumnType?.ToLower() == "guid")
                 {
                     columnType = "Guid";
                 }
@@ -1273,11 +1527,11 @@ namespace DairyStar.Builder.Services
                 //如果主键是string,则默认为是Guid或者使用的是mysql数据，字段类型是字符串并且长度是36则默认为是Guid
                 if ((column.IsKey == 1
                     && (column.ColumnType == "string"
-                       || column.ColumnType == "uniqueidentifier"
-                       || column.ColumnType == "guid"))
+                       || column.ColumnType == "uniqueidentifier"))
+                       || column.ColumnType == "guid"
                    || (IsMysql() && column.ColumnType == "string" && column.Maxlength == 36))
                 {
-                    columnType = "Guid";
+                    columnType = "Guid" + (column.IsNull == 1 ? "?" : "");
                 }
                 AttributeBuilder.Append("       public " + columnType + " " + column.ColumnName + " { get; set; }");
                 AttributeBuilder.Append("\r\n\r\n       ");
@@ -1285,6 +1539,9 @@ namespace DairyStar.Builder.Services
             if (!string.IsNullOrEmpty(tableInfo.DetailName) && createType == 1)
             {
                 AttributeBuilder.Append("[Display(Name =\"" + tableInfo.DetailCnName + "\")]");
+                AttributeBuilder.Append("\r\n       ");
+                //2019.12.20增加明细表属性的ForeignKey配置(EF Core 3.1配项)
+                AttributeBuilder.Append("[ForeignKey(\"" + sysColumn.Where(x => x.IsKey == 1).FirstOrDefault().ColumnName + "\")]");
                 AttributeBuilder.Append("\r\n       ");
                 AttributeBuilder.Append("public List<" + tableInfo.DetailName + "> " + tableInfo.DetailName + " { get; set; }");
                 AttributeBuilder.Append("\r\n");
@@ -1344,6 +1601,22 @@ namespace DairyStar.Builder.Services
             {
                 tableAttr = "[Entity(" + tableAttr + ")]";
             }
+            //entityAttribute.Add("TableCnName = \"" + tableInfo.ColumnCNName + "\"");
+            //if (!string.IsNullOrEmpty(tableInfo.TableTrueName) && tableInfo.TableName != tableInfo.TableTrueName)
+            //{
+            //    entityAttribute.Add("TableName = \"" + tableInfo.TableTrueName + "\"");
+            //    entityAttribute.Add("Table(\"" + tableInfo.TableTrueName + "\")");
+            //}
+            if (!string.IsNullOrEmpty(tableInfo.TableTrueName) && tableInfo.TableName != tableInfo.TableTrueName)
+            {
+                string tableTrueName = tableInfo.TableTrueName;
+                //2020.06.14 pgsql数据库，设置表名为小写(数据库创建表的时候也要使用小写)
+                if (DBType.Name == DbCurrentType.PgSql.ToString())
+                {
+                    tableTrueName = tableTrueName.ToLower();
+                }
+                tableAttr = tableAttr + "\r\n[Table(\"" + tableInfo.TableTrueName + "\")]";
+            }
             domainContent = domainContent.Replace("{AttributeManager}", tableAttr).Replace("{Namespace}", modelNameSpace);
 
             string folderName = tableInfo.FolderName;
@@ -1358,6 +1631,7 @@ namespace DairyStar.Builder.Services
                 folderName = "ApiEntity\\OutPut";
                 tableName = "Api" + tableInfo.TableName + "Output";
             }
+
             FileHelper.WriteFile(
                 mapPath +
                 string.Format(
@@ -1380,11 +1654,30 @@ namespace DairyStar.Builder.Services
             return "";
         }
 
-        private string GetDisplayType(bool search, string searchType, string editType)
+        private static string[] formType = new string[] { "bigint", "int", "decimal", "float", "byte" };
+        private string GetDisplayType(bool search, string searchType, string editType, string columnType)
         {
+            string type = "";
             if (search)
-                return searchType == "无" ? "" : searchType ?? "";
-            return editType == "无" ? "" : editType ?? "";
+            {
+                type = searchType == "无" ? "" : searchType ?? "";
+            }
+            else
+            {
+                type = editType == "无" ? "" : editType ?? "";
+            }
+            if (type == "" && formType.Contains(columnType))
+            {
+                if (columnType == "decimal" || columnType == "float")
+                {
+                    type = "decimal";
+                }
+                else
+                {
+                    type = "number";
+                }
+            }
+            return type;
         }
 
         private string GetDropString(string dropNo, bool vue)
@@ -1416,7 +1709,7 @@ namespace DairyStar.Builder.Services
                     {
                         text = x.ColumnCnName ?? x.ColumnName,
                         id = x.ColumnName,
-                        displayType = GetDisplayType(search, x.SearchType, x.EditType),
+                        displayType = GetDisplayType(search, x.SearchType, x.EditType, x.ColumnType),
                         require = !search && x.IsNull == 0 ? true : false,
                         columnType = vue && x.IsImage == 1 ? "img" : (x.ColumnType ?? "string").ToLower(),
                         disabled = !search && x.IsReadDataset == 1 ? true : false,
@@ -1455,14 +1748,14 @@ namespace DairyStar.Builder.Services
                 if (tableColumn == null)
                     return webResponse.Error($"明细表必须包括[{tableInfo.TableName}]主键字段[{key}]");
 
-                if (mainTableColumn.ColumnType.ToLower() != tableColumn.ColumnType.ToLower())
+                if (mainTableColumn.ColumnType?.ToLower() != tableColumn.ColumnType?.ToLower())
                 {
                     return webResponse.Error($"明细表的字段[{tableColumn.ColumnName}]类型必须与主表的主键的类型相同");
                 }
 
                 if (!IsMysql()) return webResponse;
 
-                if (mainTableColumn.ColumnType.ToLower() == "string"
+                if (mainTableColumn.ColumnType?.ToLower() == "string"
                     && tableColumn.Maxlength != 36)
                 {
                     return webResponse.Error($"主表主键类型为Guid，明细表[{tableInfo.DetailName}]配置的字段[{key}]长度必须是36，请重将明细表字段[{key}]长度设置为36，点击保存与生成Model");
@@ -1474,10 +1767,10 @@ namespace DairyStar.Builder.Services
 
             }
 
-            if (tableInfo.TableColumns.Exists(x => x.ColumnType == "string" && (x.Maxlength ?? 0) <= 0))
-            {
-                webResponse.Error("数据类型为string的列，必须输入[列最大长度]的值");
-            }
+            //if (tableInfo.TableColumns.Exists(x => x.ColumnType == "string" && (x.Maxlength ?? 0) <= 0))
+            //{
+            //    webResponse.Error("数据类型为string的列，必须输入[列最大长度]的值");
+            //}
             return webResponse;
         }
 

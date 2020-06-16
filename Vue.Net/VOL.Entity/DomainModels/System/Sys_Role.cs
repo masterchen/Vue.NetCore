@@ -13,6 +13,7 @@ using VOL.Entity.SystemModels;
 
 namespace VOL.Entity.DomainModels
 {
+    [Table("Sys_Role")]
     [EntityAttribute(TableCnName = "角色管理")]
     public class Sys_Role : BaseEntity
     {
@@ -118,7 +119,7 @@ namespace VOL.Entity.DomainModels
         [Column(TypeName = "tinyint")]
         [Editable(true)]
         public byte? Enable { get; set; }
-
+        [ForeignKey("Role_Id")]
         public List<Sys_RoleAuth> RoleAuths { get; set; }
 
     }

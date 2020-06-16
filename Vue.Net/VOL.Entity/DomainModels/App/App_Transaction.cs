@@ -13,6 +13,7 @@ using VOL.Entity.SystemModels;
 
 namespace VOL.Entity.DomainModels
 {
+    [Table("App_Transaction")]
     [Entity(TableCnName = "导入导出")]
     public class App_Transaction:BaseEntity
     {
@@ -76,6 +77,7 @@ namespace VOL.Entity.DomainModels
        [Display(Name ="描述")]
        [MaxLength(500)]
        [Column(TypeName="nvarchar(500)")]
+       [Editable(true)]
        [Required(AllowEmptyStrings=false)]
        public string Describe { get; set; }
 
@@ -99,7 +101,6 @@ namespace VOL.Entity.DomainModels
        [Display(Name ="提交人")]
        [MaxLength(30)]
        [Column(TypeName="nvarchar(30)")]
-       [Editable(true)]
        public string Creator { get; set; }
 
        /// <summary>
@@ -107,7 +108,6 @@ namespace VOL.Entity.DomainModels
        /// </summary>
        [Display(Name ="提交时间")]
        [Column(TypeName="datetime")]
-       [Editable(true)]
        public DateTime? CreateDate { get; set; }
 
        /// <summary>
