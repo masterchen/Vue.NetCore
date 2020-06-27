@@ -6,13 +6,13 @@
       </div>
       <div class="vol-menu">
         <el-scrollbar style="height:100%;">
-          <VolMenu theme="dark" :onSelect="onSelect" :options="menuOptions"></VolMenu>
+          <VolMenu :theme="menu_theme" :onSelect="onSelect" :options="menuOptions"></VolMenu>
         </el-scrollbar>
       </div>
     </div>
     <div class="vol-container">
       <div class="vol-header">
-        <span class="header-text">支持前端、后台业务代码扩展的快速开发框架</span>
+        <span class="header-text">支持业务代码扩展的快速开发框架</span>
         <div class="header-info">
           <div class="h-link">
             <ul>
@@ -62,7 +62,7 @@
       </div>
       <div class="vol-main" id="vol-main">
         <el-scrollbar style="height:100%;">
-           <!-- 2020.06.03增加路由切换时加载提示 -->
+          <!-- 2020.06.03增加路由切换时加载提示 -->
           <loading v-show="$store.getters.isLoading()"></loading>
           <!-- <transition name="fade" mode="in-out">  -->
           <!-- <transition enter-active-class="animated fadeInLeftBig"> -->
@@ -93,6 +93,7 @@ var $vueIndex;
 export default {
   data() {
     return {
+      menu_theme: "light",
       theme_moel: false,
       theme_color: [
         { name: "dark", color: "#272929" },
@@ -111,6 +112,7 @@ export default {
       date: "",
       theme: "blue",
       links: [
+        { text: "大屏数据", path: "/bigdata", id: -3 },
         { text: "框架文档", path: "/document", id: -2 },
         { text: "GitHub", path: "#", id: -3 },
         { text: "个人中心", path: "/UserInfo", id: -1 },
@@ -128,6 +130,7 @@ export default {
     if (theme) {
       this.theme = theme;
     }
+    this.menu_theme = this.theme == "white" ? "dark" : "light";
     let userInfo = this.$store.getters.getUserInfo();
     this.userName = userInfo.userName;
     this.userImg = this.base.getImgSrc(userInfo.img, this.http.ipAddress);
@@ -175,6 +178,7 @@ export default {
       if (this.theme != name) {
         this.theme = name;
       }
+      this.menu_theme = this.theme == "white" ? "dark" : "light";
       localStorage.setItem("vol_theme", name);
     },
     to(item) {
@@ -293,6 +297,7 @@ export default {
 };
 </script>
 
+
 <style scoped>
 body {
   height: 100%;
@@ -326,8 +331,10 @@ body {
   width: 100%;
   top: 60px;
   bottom: 0;
+  background: white;
   border-right: 1px solid #e3e3e3;
 }
+
 .vol-aside .vol-menu >>> .ivu-menu {
   text-align: left;
   width: 100% !important;
@@ -348,7 +355,7 @@ body {
   width: 100%;
   display: inline-block;
   /* border-top: 1px solid #e4e4e4; */
-  border-bottom: 2px solid #eee;
+  border-bottom: 1px solid #eee;
   /* z-index: 1; */
 }
 .vol-container .vol-path span {
@@ -357,7 +364,7 @@ body {
   color: #969696;
 }
 .vol-header {
-  height: 60px;
+  height: 61px;
   width: 100%;
   position: relative;
   border-bottom: 1px solid #eee;
@@ -370,7 +377,7 @@ body {
   width: 100%;
   /* height: 100%; */
   bottom: 0;
-  top: 92px;
+  top: 93px;
   margin: 0;
   /* padding: 15px; */
   overflow: auto;
@@ -398,6 +405,7 @@ body {
   height: 100%;
 }
 .user-header {
+  background: white;
   height: 52px;
   width: 52px;
   border-radius: 50%;
@@ -405,7 +413,7 @@ body {
   top: 4px;
   position: relative;
   /* right: 35px; */
-  border: 2px solid #dfdfdf;
+  border: 1px solid #dfdfdf;
   /* float: right; */
 }
 .header-text {
@@ -562,6 +570,14 @@ img:not([src]) {
   color: white !important;
   background: #0fa0e1 !important;
 }
+.vol-theme-dark .vol-aside .vol-menu >>> .ivu-menu-submenu-title:hover,
+.vol-theme-dark .vol-aside .vol-menu >>> .ivu-menu-item:hover {
+  color: white;
+}
+
+.vol-theme-dark .vol-aside .vol-menu >>> .ivu-menu-opened {
+  width: 99% !important;
+}
 </style>
 
 
@@ -598,9 +614,6 @@ img:not([src]) {
   }
   .vol-header .header-text {
     color: #fbfbfb;
-  }
-  .vol-aside .vol-menu {
-    background: #515a6e;
   }
 }
 </style>
@@ -640,9 +653,6 @@ img:not([src]) {
   .vol-header .header-text {
     color: #fbfbfb;
   }
-  .vol-aside .vol-menu {
-    background: #515a6e;
-  }
 }
 </style>
 
@@ -679,9 +689,6 @@ img:not([src]) {
   }
   .vol-header .header-text {
     color: #fbfbfb;
-  }
-  .vol-aside .vol-menu {
-    background: #515a6e;
   }
 }
 </style>
@@ -720,26 +727,26 @@ img:not([src]) {
   .vol-header .header-text {
     color: #fbfbfb;
   }
-  .vol-aside .vol-menu {
-    background: #005bb8;
-  }
 }
 </style>
 
 <style  scoped>
-.vol-theme-blue .vol-aside >>> .ivu-menu-submenu-title {
+/* .vol-theme-blue .vol-aside >>> .ivu-menu-submenu-title {
   background: #005bb8 !important;
 }
 .vol-theme-blue .vol-aside >>> .ivu-menu-opened {
   background: #006cdf !important;
   color: white;
-}
+} */
 </style>
 
 
 <style lang="less" scoped>
 //白色
 .vol-theme-white {
+  .vol-aside .vol-menu {
+    background: #0159fb;
+  }
   // .header-text {
   //   color: #dcdfe6;
   // }
@@ -786,18 +793,18 @@ img:not([src]) {
   // .vol-header .header-text {
   //   color: #fbfbfb;
   // }
-  .vol-aside .vol-menu {
-    background: #515a6e;
-  }
 }
 </style>
 <style  scoped>
 .vol-theme-white .vol-aside >>> .ivu-menu-submenu-title {
-  background: #005bb8 !important;
+  background: #0159fb !important;
 }
 .vol-theme-white .vol-aside >>> .ivu-menu-opened {
   background: #006cdf !important;
   color: white;
+}
+.vol-aside .vol-menu {
+  background: white;
 }
 </style>
 
